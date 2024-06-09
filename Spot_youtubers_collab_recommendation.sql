@@ -6,18 +6,18 @@ WITH limited_videos AS (
     FROM
         assignment.public.youtube_video_data
     WHERE
-        published_at >= DATEADD(year, -1, CURRENT_DATE())
+        published_at >= DATEADD(YEAR, -1, CURRENT_DATE())
     LIMIT 1000000
 ),
 most_recent_video_record AS (
     -- get the most recent youtube channel records from the db
     SELECT
-        video_id as v_id,
-        channel_id as channel_id_1,
+        video_id AS v_id,
+        channel_id AS channel_id_1,
         MAX(updated_time) AS most_recent_insertion_date_video
     FROM
         limited_videos
-    group by
+    GROUP BY
         (channel_id_1, v_id)
 ),
 most_recent_video_data AS (
@@ -36,24 +36,24 @@ flattened_table AS (
         f.value AS array_elem
     FROM
         most_recent_video_data t,
-        LATERAL FLATTEN(input => t.tags) f
+        LATERAL FLATTEN(INPUT => t.tags) f
 ),
 sumed_pets_video_views AS (
     SELECT
-        distinct channel_id as channel_id_2,
-        sum(view_count) as total_pets_video_views
-    from
+        DISTINCT channel_id AS channel_id_2,
+        sum(view_count) AS total_pets_video_views
+    FROM
         flattened_table
-    group by
+    GROUP BY
         channel_id_2
 ),
 final_video_table AS (
-    select
+    SELECT
         *
-    from
+    FROM
         flattened_table ft
-        join sumed_pets_video_views spvv on ft.channel_id = spvv.channel_id_2
-    where
+        JOIN sumed_pets_video_views spvv ON ft.channel_id = spvv.channel_id_2
+    WHERE
         view_count > 0
 ),
 -- video analysis ends here
@@ -65,7 +65,7 @@ most_recent_channel_record AS (
         MAX(updated_time) AS most_recent_insertion_date
     FROM
         assignment.public.youtube_channel_data
-    group by
+    GROUP BY
         (channel_id)
 ),
 limited_channels AS (
@@ -85,7 +85,7 @@ limited_channels AS (
 -- channel analysis ends here
 SELECT
     -- final selection and recommendation
-    distinct (limited_channels.channel_id),
+    DISTINCT (limited_channels.channel_id),
     limited_channels.TITLE,
     limited_channels.CUSTOM_URL,
     final_video_table.total_pets_video_views / limited_channels.view_count as channel_pets_oriented_score,
