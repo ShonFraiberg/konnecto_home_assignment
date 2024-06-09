@@ -1,16 +1,25 @@
--- video analysis starts here
+-- video starts here
 WITH limited_videos AS (
-    -- get limited videos
+    -- Get the video data which pertaining to pets and lifestyle from the last year
     SELECT
         *
     FROM
         assignment.public.youtube_video_data
     WHERE
         published_at >= DATEADD(YEAR, -1, CURRENT_DATE())
-    LIMIT 1000000
+        AND (
+            ARRAY_TO_STRING(topic_categories, ',') ILIKE '%pet%'
+            AND ARRAY_TO_STRING(topic_categories, ',') ILIKE '%lifestyle%'
+        )
+        AND (
+            description NOT LIKE '%rescue%'
+            AND description NOT LIKE '%shelter%'
+        )
+        AND TAGS IS NOT NULL
+        -- limit 100000 -- uncomment if a sample needed
 ),
 most_recent_video_record AS (
-    -- get the most recent youtube channel records from the db
+    -- Get the most recent video record in each channel by video_id and channel_id
     SELECT
         video_id AS v_id,
         channel_id AS channel_id_1,
@@ -21,7 +30,7 @@ most_recent_video_record AS (
         (channel_id_1, v_id)
 ),
 most_recent_video_data AS (
-    -- get the most recent youtube channel records from the db
+    -- Get the data regarding the most recent video record from "most_recent_video_record" table
     SELECT
         *
     FROM
@@ -30,24 +39,44 @@ most_recent_video_data AS (
         AND lv.updated_time = ri.most_recent_insertion_date_video
 ),
 flattened_table AS (
-    -- flatten the tags columns
+    -- flatten the tags columns and derive the relevant data for the insurence company
     SELECT
-        t.*,
+        mrvd.*,
         f.value AS array_elem
     FROM
-        most_recent_video_data t,
-        LATERAL FLATTEN(INPUT => t.tags) f
+        most_recent_video_data mrvd,
+        LATERAL FLATTEN(INPUT => mrvd.tags) f
+    WHERE
+        array_elem IN (
+            'cat',
+            'cats',
+            'dog',
+            'dogs',
+            'kitten',
+            'kittens',
+            'puppy',
+            'puppies'
+        )
 ),
 sumed_pets_video_views AS (
+    -- Sum the views per channel for the relevant videos records only
     SELECT
-        DISTINCT channel_id AS channel_id_2,
-        sum(view_count) AS total_pets_video_views
+        channel_id AS channel_id_2,
+        SUM(view_count) AS total_pets_views
     FROM
-        flattened_table
+        (
+            SELECT
+                DISTINCT channel_id,
+                video_id,
+                view_count
+            FROM
+                flattened_table
+        ) AS unique_videos
     GROUP BY
         channel_id_2
 ),
 final_video_table AS (
+    -- Create the final video table after analysis
     SELECT
         *
     FROM
@@ -55,11 +84,12 @@ final_video_table AS (
         JOIN sumed_pets_video_views spvv ON ft.channel_id = spvv.channel_id_2
     WHERE
         view_count > 0
+        AND made_for_kids != TRUE
 ),
--- video analysis ends here
--- channel analysis starts here
+-- video ends here
+-- channel starts here
 most_recent_channel_record AS (
-    -- get the most recent youtube channel records from the db
+    -- Get the most recent channel record
     SELECT
         channel_id,
         MAX(updated_time) AS most_recent_insertion_date
@@ -69,11 +99,11 @@ most_recent_channel_record AS (
         (channel_id)
 ),
 limited_channels AS (
-    -- join the relent data for the most updated records
+    -- Get the data regarding the most recent video record from "most_recent_channel_record" table
     SELECT
-        ycd.title,
-        ycd.CUSTOM_URL,
         ycd.channel_id,
+        ycd.custom_url,
+        ycd.title,
         ri.most_recent_insertion_date,
         ycd.view_count,
         ycd.subscriber_count
@@ -81,29 +111,30 @@ limited_channels AS (
         assignment.public.youtube_channel_data ycd
         JOIN most_recent_channel_record ri ON ycd.channel_id = ri.channel_id
         AND ycd.updated_time = ri.most_recent_insertion_date
+    WHERE
+        (
+            ycd.description NOT LIKE '%rescue%'
+            AND ycd.description NOT LIKE '%shelter%'
+        )
 )
--- channel analysis ends here
 SELECT
-    -- final selection and recommendation
+    -- Get the youtube channels for recommendation
     DISTINCT (limited_channels.channel_id),
-    limited_channels.TITLE,
-    limited_channels.CUSTOM_URL,
-    final_video_table.total_pets_video_views / limited_channels.view_count as channel_pets_oriented_score,
-    limited_channels.view_count as total_channel_views,
-    final_video_table.total_pets_video_views,
-    limited_channels.subscriber_count as subscribers
+    limited_channels.title,
+    limited_channels.custom_url,
+    final_video_table.total_pets_views / limited_channels.view_count AS channel_pets_oriented_score,
+    limited_channels.view_count AS total_channel_views,
+    final_video_table.total_pets_views,
+    limited_channels.subscriber_count AS subscribers
 FROM
     final_video_table
     JOIN limited_channels ON final_video_table.channel_id = limited_channels.channel_id
 WHERE
-    (
-        array_elem LIKE 'dog'
-        OR array_elem LIKE 'kitten'
-        OR array_elem LIKE 'puppy'
-        OR array_elem LIKE 'cat'
-    )
-    AND channel_pets_oriented_score > 0.15 -- threshold
+    channel_pets_oriented_score > 0.10 -- threshold
     AND subscribers > 20000 -- threshold
     AND total_channel_views > 0
+    AND limited_channels.title NOT LIKE '%Rescue%' -- not relevant
+    AND limited_channels.title NOT LIKE '%Shelter%' -- not relevant
 ORDER BY
+    subscribers DESC,
     channel_pets_oriented_score DESC
